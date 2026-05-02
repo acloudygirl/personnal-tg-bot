@@ -1,5 +1,5 @@
 # cloudy_lesbian_bot (Rust + Telegram)
-
+鉴于最进机场不稳定，独立端口，拥有寻找最优节点功能，不影响本机clash使用
 A Telegram bot built with Rust (`teloxide`) for `@cloudy_lesbian_bot`.
 
 ## 命令
