@@ -1,0 +1,13 @@
+[package]
+name = "cloudy_lesbian_bot"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+chrono = { version = "0.4", features = ["clock"] }
+dotenvy = "0.15"
+log = "0.4"
+pretty_env_logger = "0.5"
+rusqlite = { version = "0.32", features = ["bundled"] }
+teloxide = { version = "0.17", features = ["macros", "ctrlc_handler"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
