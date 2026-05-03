@@ -71,6 +71,7 @@ At schedule time, bot sends:
 - `start-stack.ps1` also starts:
   - keep-awake helper (reduce Modern Standby suspension when lid is closed)
   - proxy watchdog (auto switch to healthy proxy group)
+  - bot watchdog (auto restart bot after repeated Telegram health-check failures)
 
 ## Dedicated proxy for bot (independent from your VPN app toggle)
 

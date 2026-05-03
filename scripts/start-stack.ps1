@@ -4,6 +4,7 @@ $syncProxyConfigScript = Join-Path $PSScriptRoot "sync-bot-proxy-config.ps1"
 $startKeepAwakeScript = Join-Path $PSScriptRoot "start-keep-awake.ps1"
 $startProxyScript = Join-Path $PSScriptRoot "start-proxy-hidden.ps1"
 $startWatchdogScript = Join-Path $PSScriptRoot "start-proxy-watchdog.ps1"
+$startBotWatchdogScript = Join-Path $PSScriptRoot "start-bot-watchdog.ps1"
 $startBotScript = Join-Path $PSScriptRoot "start-bot-hidden.ps1"
 
 if (Test-Path $syncProxyConfigScript) {
@@ -20,6 +21,10 @@ if (Test-Path $startProxyScript) {
 
 if (Test-Path $startWatchdogScript) {
     & $startWatchdogScript
+}
+
+if (Test-Path $startBotWatchdogScript) {
+    & $startBotWatchdogScript
 }
 
 if (-not (Test-Path $startBotScript)) {
