@@ -1,81 +1,82 @@
-# cloudy_lesbian_bot (Rust + Telegram)
+# cloudy_lesbian_bot（Rust + Telegram）
 
-A Telegram bot built with Rust (`teloxide`) for `@cloudy_lesbian_bot`.
+这是一个使用 Rust（`teloxide`）开发的 Telegram 机器人项目，目标账号为 `@cloudy_lesbian_bot`。
 
-## Commands
+## 命令说明
 
-- `/start` - welcome message
-- `/help` - command list
-- `/ping` - health check
-- `/chatid` - current chat id
-- `/whoami` - configured bot username
-- `/daily HH:MM @username message` - add a daily scheduled group mention
-- `/dailies` - list daily tasks in current group
-- `/dailydel <id>` - delete a daily task in current group
+- `/start`：欢迎信息
+- `/help`：命令列表
+- `/ping`：连通性检测
+- `/chatid`：显示当前聊天 ID
+- `/whoami`：显示当前机器人用户名
+- `/daily HH:MM @username message`：新增每日定时 @ 提醒
+- `/dailies`：查看当前群的定时任务
+- `/dailydel <id>`：删除指定任务
 
-## Daily mention behavior
+## 每日提醒行为
 
-At schedule time, bot sends:
+任务触发时，机器人会发送：
 
-`@target @initiator想要和你说：<custom message>`
+`@目标用户 @发起人想要和你说：<自定义消息>`
 
-## Run
+## 运行方式
 
-1. Create a bot in `@BotFather` and get token.
-2. Copy env template:
+1. 在 `@BotFather` 创建机器人并获取 Token
+2. 复制环境变量模板：
 
    ```powershell
    Copy-Item .env.example .env
    ```
 
-3. Fill `.env`:
+3. 编辑 `.env`：
    - `TELOXIDE_TOKEN=...`
-   - `TELOXIDE_PROXY=...` (if Telegram is blocked on your network)
-4. Start:
+   - `TELOXIDE_PROXY=...`（如果你的网络环境无法直连 Telegram）
+4. 启动：
 
    ```powershell
    cargo run
    ```
 
-## Persistence
+## 持久化
 
-- Daily tasks are stored in `schedules.db` in project root.
-- Existing tasks are loaded automatically on startup.
+- 每日任务保存在项目根目录的 `schedules.db`
+- 机器人启动时会自动加载已有任务
 
-## Background + Autostart
+## 后台运行与开机自启
 
-- Install autostart (logon trigger):
+- 安装开机自启（登录触发）：
 
   ```powershell
   powershell -ExecutionPolicy Bypass -File .\scripts\install-autostart.ps1
   ```
 
-- Start proxy + bot now in background:
+- 立即后台启动（代理 + 机器人）：
 
   ```powershell
   powershell -ExecutionPolicy Bypass -File .\scripts\start-stack.ps1
   ```
 
-- Stop proxy + bot:
+- 停止（代理 + 机器人）：
 
   ```powershell
   powershell -ExecutionPolicy Bypass -File .\scripts\stop-stack.ps1
   ```
 
-- Show proxy health summary:
+- 查看代理健康摘要：
 
   ```powershell
   powershell -ExecutionPolicy Bypass -File .\scripts\proxy-health-report.ps1
   ```
 
-- `start-stack.ps1` also starts:
-  - keep-awake helper (reduce Modern Standby suspension when lid is closed)
-  - proxy watchdog (auto switch to healthy proxy group)
-  - bot watchdog (auto restart bot after repeated Telegram health-check failures)
+`start-stack.ps1` 还会自动启动以下守护能力：
 
-## Dedicated proxy for bot (independent from your VPN app toggle)
+- keep-awake：降低合盖后 Modern Standby 导致的暂停风险
+- proxy watchdog：自动切换到健康代理组
+- bot watchdog：连续网络失败时自动重启机器人
 
-If you want bot traffic always through its own proxy core (even when your normal VPN app is off), add these to `.env`:
+## 机器人独立代理（不受日常 VPN 开关影响）
+
+如果你希望机器人始终走独立代理核心（即使你平时 VPN 客户端关闭），可在 `.env` 配置：
 
 ```env
 TELOXIDE_PROXY=http://127.0.0.1:17890
@@ -87,5 +88,5 @@ BOT_PROXY_SECRET=set-your-secret
 BOT_PROXY_PRIMARY_GROUP=LiltPupu  ( •̀ᴗ•́ )✧
 ```
 
-- `start-stack.ps1` first syncs proxy config, then starts keep-awake, proxy core, proxy watchdog, and bot.
-- Bot startup waits for proxy endpoint briefly before launching.
+- `start-stack.ps1` 会先同步代理配置，再依次启动 keep-awake、代理核心、代理守护、机器人守护和机器人主程序
+- 机器人启动前会短暂等待代理端口可用
