@@ -1,7 +1,10 @@
+use std::fs::{File, OpenOptions};
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chrono::{Days, Local, NaiveDate, NaiveTime};
+use fs2::FileExt;
 use log::{info, warn};
 use rusqlite::{Connection, params};
 use teloxide::prelude::*;
@@ -12,8 +15,13 @@ use tokio::time::{self, Duration, MissedTickBehavior};
 
 const EXPECTED_BOT_USERNAME: &str = "cloudy_lesbian_bot";
 const DB_FILE_PATH: &str = "schedules.db";
+const LOCK_FILE_PATH: &str = "cloudy_lesbian_bot.lock";
 
 type SharedSchedules = Arc<Mutex<ScheduleStore>>;
+
+struct SingleInstanceLock {
+    _file: File,
+}
 
 #[derive(Debug)]
 struct ScheduleStore {
@@ -66,6 +74,18 @@ async fn main() {
     pretty_env_logger::init();
     info!("Booting @{} ...", EXPECTED_BOT_USERNAME);
 
+    let _instance_lock = match try_acquire_single_instance_lock() {
+        Ok(Some(lock)) => lock,
+        Ok(None) => {
+            warn!("Another bot instance is already running. This process will exit.");
+            return;
+        }
+        Err(err) => {
+            warn!("Failed to acquire single-instance lock: {err}");
+            return;
+        }
+    };
+
     let bot = Bot::from_env();
     let store = ScheduleStore::load_or_init(DB_FILE_PATH)
         .unwrap_or_else(|err| panic!("Failed to initialize schedule storage: {err}"));
@@ -88,6 +108,20 @@ async fn main() {
         async move { answer(bot, msg, cmd, schedules).await }
     })
     .await;
+}
+
+fn try_acquire_single_instance_lock() -> std::io::Result<Option<SingleInstanceLock>> {
+    let file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(LOCK_FILE_PATH)?;
+
+    match file.try_lock_exclusive() {
+        Ok(()) => Ok(Some(SingleInstanceLock { _file: file })),
+        Err(err) if err.kind() == ErrorKind::WouldBlock => Ok(None),
+        Err(err) => Err(err),
+    }
 }
 
 async fn wait_for_telegram_api(bot: &Bot) -> Me {
