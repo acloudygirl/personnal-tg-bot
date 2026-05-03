@@ -51,10 +51,16 @@ if (Test-Path $proxyPidPath) {
     if ($existingPidRaw -match '^\d+$') {
         $existingProc = Get-Process -Id ([int]$existingPidRaw) -ErrorAction SilentlyContinue
         if ($existingProc) {
-            Write-Output "Proxy already running with PID=$existingPidRaw"
-            exit 0
+            $proxyPortOpen = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+                Where-Object { $_.OwningProcess -eq $existingProc.Id -and $_.LocalPort -in @(17890, 17891, 17899) } |
+                Select-Object -First 1
+            if ($proxyPortOpen) {
+                Write-Output "Proxy already running with PID=$existingPidRaw"
+                exit 0
+            }
         }
     }
+    Remove-Item $proxyPidPath -Force -ErrorAction SilentlyContinue
 }
 
 $logDir = Join-Path $projectRoot "logs"

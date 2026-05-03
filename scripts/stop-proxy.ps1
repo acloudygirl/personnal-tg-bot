@@ -25,3 +25,9 @@ if (-not $proc) {
 $proc | Stop-Process -Force
 Remove-Item $proxyPidPath -Force -ErrorAction SilentlyContinue
 Write-Output "Stopped proxy process PID=$pidRaw"
+
+$leftover = Get-Process -Name "verge-mihomo" -ErrorAction SilentlyContinue
+if ($leftover) {
+    $leftover | Stop-Process -Force
+    Write-Output "Stopped leftover verge-mihomo PID(s): $($leftover.Id -join ', ')"
+}
