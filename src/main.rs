@@ -1,9 +1,10 @@
-use std::fs::{File, OpenOptions};
+use std::collections::HashSet;
+use std::fs::{File, OpenOptions, create_dir_all};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use chrono::{Days, Local, NaiveDate, NaiveTime};
+use chrono::{Days, Duration as ChronoDuration, Local, NaiveDate, NaiveTime};
 use fs2::FileExt;
 use log::{info, warn};
 use rusqlite::{Connection, params};
@@ -16,6 +17,8 @@ use tokio::time::{self, Duration, MissedTickBehavior};
 const EXPECTED_BOT_USERNAME: &str = "cloudy_lesbian_bot";
 const DB_FILE_PATH: &str = "schedules.db";
 const LOCK_FILE_PATH: &str = "cloudy_lesbian_bot.lock";
+const RUNTIME_DIR_NAME: &str = "cloudy_lesbian_bot";
+const SEND_WINDOW_MINUTES: i64 = 10;
 
 type SharedSchedules = Arc<Mutex<ScheduleStore>>;
 
@@ -111,17 +114,27 @@ async fn main() {
 }
 
 fn try_acquire_single_instance_lock() -> std::io::Result<Option<SingleInstanceLock>> {
+    let lock_path = runtime_file_path(LOCK_FILE_PATH)?;
     let file = OpenOptions::new()
         .create(true)
         .read(true)
         .write(true)
-        .open(LOCK_FILE_PATH)?;
+        .open(lock_path)?;
 
     match file.try_lock_exclusive() {
         Ok(()) => Ok(Some(SingleInstanceLock { _file: file })),
         Err(err) if err.kind() == ErrorKind::WouldBlock => Ok(None),
         Err(err) => Err(err),
     }
+}
+
+fn runtime_file_path(file_name: &str) -> std::io::Result<PathBuf> {
+    let base_dir = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    let runtime_dir = base_dir.join(RUNTIME_DIR_NAME);
+    create_dir_all(&runtime_dir)?;
+    Ok(runtime_dir.join(file_name))
 }
 
 async fn wait_for_telegram_api(bot: &Bot) -> Me {
@@ -250,25 +263,55 @@ async fn handle_daily_create(
     };
     let creator_mention = creator_mention(from);
 
+    let mut duplicate_tip: Option<String> = None;
+    let mut create_error = false;
     let id = {
         let mut state = schedules.lock().await;
-        match state.insert_schedule(
-            msg.chat.id,
-            trigger_time,
-            next_fire_date,
-            creator_mention.clone(),
-            target_mention.clone(),
-            custom_message.clone(),
-        ) {
-            Ok(id) => id,
-            Err(err) => {
-                warn!("Failed to save daily task: {err}");
-                bot.send_message(msg.chat.id, "保存每日任务失败，请稍后再试。")
-                    .await?;
-                return Ok(());
+        if let Some(existing) = state.schedules.iter().find(|item| {
+            item.chat_id == msg.chat.id
+                && item.trigger_time == trigger_time
+                && item.creator_mention == creator_mention
+                && item.target_mention == target_mention
+                && item.message == custom_message
+        }) {
+            duplicate_tip = Some(format!(
+                "检测到相同任务已存在。\nID: {}\n时间: {}\n目标: {}\n下次执行日期: {}\n消息: {}",
+                existing.id,
+                existing.trigger_time.format("%H:%M"),
+                existing.target_mention,
+                existing.next_fire_date,
+                existing.message
+            ));
+            0
+        } else {
+            match state.insert_schedule(
+                msg.chat.id,
+                trigger_time,
+                next_fire_date,
+                creator_mention.clone(),
+                target_mention.clone(),
+                custom_message.clone(),
+            ) {
+                Ok(id) => id,
+                Err(err) => {
+                    warn!("Failed to save daily task: {err}");
+                    create_error = true;
+                    0
+                }
             }
         }
     };
+
+    if create_error {
+        bot.send_message(msg.chat.id, "保存每日任务失败，请稍后再试。")
+            .await?;
+        return Ok(());
+    }
+
+    if let Some(text) = duplicate_tip {
+        bot.send_message(msg.chat.id, text).await?;
+        return Ok(());
+    }
 
     bot.send_message(
         msg.chat.id,
@@ -422,18 +465,80 @@ async fn collect_due_messages(schedules: &SharedSchedules) -> Vec<OutboundMessag
     let now = Local::now();
     let today = now.date_naive();
     let current_time = now.time();
+    let send_window = ChronoDuration::minutes(SEND_WINDOW_MINUTES);
 
     let mut due_messages = Vec::new();
-    let mut updates = Vec::new();
+    let mut sent_schedule_ids = HashSet::new();
+    let mut sent_message_keys = HashSet::new();
     let mut state = schedules.lock().await;
+    let conn = match state.open_conn() {
+        Ok(conn) => conn,
+        Err(err) => {
+            warn!("Failed to open sqlite when collecting due messages: {err}");
+            return due_messages;
+        }
+    };
 
     for schedule in &mut state.schedules {
-        let should_fire = schedule.next_fire_date < today
-            || (schedule.next_fire_date == today && current_time >= schedule.trigger_time);
+        let since_trigger = current_time.signed_duration_since(schedule.trigger_time);
 
-        if should_fire {
-            schedule.next_fire_date = today.checked_add_days(Days::new(1)).unwrap_or(today);
-            updates.push((schedule.id, schedule.next_fire_date));
+        // Bot was offline and date lagged behind: fast-forward schedule only.
+        if schedule.next_fire_date < today {
+            let next_date = if since_trigger < send_window {
+                today
+            } else {
+                today.checked_add_days(Days::new(1)).unwrap_or(today)
+            };
+            if persist_next_fire_date_if_matches(
+                &conn,
+                schedule.id,
+                schedule.next_fire_date,
+                next_date,
+            ) {
+                schedule.next_fire_date = next_date;
+            }
+            continue;
+        }
+
+        if schedule.next_fire_date == today && current_time >= schedule.trigger_time {
+            let next_date = today.checked_add_days(Days::new(1)).unwrap_or(today);
+            if since_trigger >= send_window {
+                if persist_next_fire_date_if_matches(
+                    &conn,
+                    schedule.id,
+                    schedule.next_fire_date,
+                    next_date,
+                ) {
+                    schedule.next_fire_date = next_date;
+                }
+                continue;
+            }
+
+            if !persist_next_fire_date_if_matches(
+                &conn,
+                schedule.id,
+                schedule.next_fire_date,
+                next_date,
+            ) {
+                continue;
+            }
+
+            schedule.next_fire_date = next_date;
+            if !sent_schedule_ids.insert(schedule.id) {
+                continue;
+            }
+            let dedupe_key = format!(
+                "{}|{}|{}|{}|{}",
+                schedule.chat_id.0,
+                schedule.trigger_time.format("%H:%M"),
+                schedule.creator_mention,
+                schedule.target_mention,
+                schedule.message
+            );
+            if !sent_message_keys.insert(dedupe_key) {
+                continue;
+            }
+
             due_messages.push(OutboundMessage {
                 schedule_id: schedule.id,
                 chat_id: schedule.chat_id,
@@ -445,11 +550,35 @@ async fn collect_due_messages(schedules: &SharedSchedules) -> Vec<OutboundMessag
         }
     }
 
-    if let Err(err) = state.persist_next_fire_dates(&updates) {
-        warn!("Failed to persist schedule ticks: {err}");
-    }
-
     due_messages
+}
+
+fn persist_next_fire_date_if_matches(
+    conn: &Connection,
+    schedule_id: u64,
+    old_date: NaiveDate,
+    next_date: NaiveDate,
+) -> bool {
+    let changed = match conn.execute(
+        "UPDATE daily_schedules
+         SET next_fire_date = ?1
+         WHERE id = ?2 AND next_fire_date = ?3",
+        params![
+            next_date.format("%Y-%m-%d").to_string(),
+            schedule_id as i64,
+            old_date.format("%Y-%m-%d").to_string()
+        ],
+    ) {
+        Ok(changed) => changed,
+        Err(err) => {
+            warn!(
+                "Failed to persist next_fire_date for task {}: {}",
+                schedule_id, err
+            );
+            return false;
+        }
+    };
+    changed > 0
 }
 
 impl ScheduleStore {
@@ -583,22 +712,5 @@ impl ScheduleStore {
         } else {
             Ok(false)
         }
-    }
-
-    fn persist_next_fire_dates(&self, updates: &[(u64, NaiveDate)]) -> rusqlite::Result<()> {
-        if updates.is_empty() {
-            return Ok(());
-        }
-
-        let mut conn = self.open_conn()?;
-        let tx = conn.transaction()?;
-        for (id, next_fire_date) in updates {
-            tx.execute(
-                "UPDATE daily_schedules SET next_fire_date = ?1 WHERE id = ?2",
-                params![next_fire_date.format("%Y-%m-%d").to_string(), *id as i64],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
     }
 }
