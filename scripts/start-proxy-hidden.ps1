@@ -1,3 +1,8 @@
+<#
+  功能：后台启动专用代理。
+  作用：从 .env 读取代理程序路径与参数，启动后记录日志与 PID。
+#>
+
 $ErrorActionPreference = "Stop"
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
@@ -46,6 +51,43 @@ if (-not (Test-Path $proxyExe)) {
 }
 
 $proxyPidPath = Join-Path (Join-Path $projectRoot "logs") "proxy.pid"
+
+function Get-ListeningProxyProcessIds {
+    $pids = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+        Where-Object { $_.LocalPort -in @(17890, 17891, 17899) } |
+        Select-Object -ExpandProperty OwningProcess -Unique
+
+    if ($null -eq $pids) {
+        return @()
+    }
+
+    return @($pids)
+}
+
+function Is-ProxyProcess {
+    param([int]$ProcessId)
+
+    $proc = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    if (-not $proc) {
+        return $false
+    }
+
+    if ($proc.ProcessName -eq "verge-mihomo") {
+        return $true
+    }
+
+    try {
+        $cmd = (Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction SilentlyContinue).CommandLine
+        if (-not [string]::IsNullOrWhiteSpace($cmd) -and $cmd.ToLowerInvariant().Contains("verge-mihomo")) {
+            return $true
+        }
+    } catch {
+        # Ignore command line lookup failure.
+    }
+
+    return $false
+}
+
 if (Test-Path $proxyPidPath) {
     $existingPidRaw = Get-Content $proxyPidPath -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($existingPidRaw -match '^\d+$') {
@@ -61,6 +103,15 @@ if (Test-Path $proxyPidPath) {
         }
     }
     Remove-Item $proxyPidPath -Force -ErrorAction SilentlyContinue
+}
+
+$listeningPids = Get-ListeningProxyProcessIds
+foreach ($processId in $listeningPids) {
+    if (Is-ProxyProcess -ProcessId ([int]$processId)) {
+        Set-Content -Path $proxyPidPath -Value ([int]$processId) -Encoding ASCII
+        Write-Output "Proxy already running with PID=$processId"
+        exit 0
+    }
 }
 
 $logDir = Join-Path $projectRoot "logs"
@@ -83,3 +134,4 @@ Set-Content -Path $proxyPidPath -Value $process.Id -Encoding ASCII
 Write-Output "Proxy started. PID=$($process.Id)"
 Write-Output "Proxy STDOUT log: $stdoutLog"
 Write-Output "Proxy STDERR log: $stderrLog"
+

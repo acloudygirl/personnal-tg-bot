@@ -1,3 +1,8 @@
+<#
+  功能：生成 bot 专用代理配置。
+  作用：从 Clash Verge 配置复制并改写端口/控制器/mode/dns 等关键项。
+#>
+
 param(
     [int]$MixedPort = 17899,
     [int]$SocksPort = 17891,
@@ -103,3 +108,4 @@ if ($prefix.Count -gt 0) {
 
 Set-Content -Path $targetConfig -Value $lines -Encoding UTF8
 Write-Output "Bot proxy config synced to: $targetConfig"
+

@@ -1,3 +1,8 @@
+<#
+  功能：安装开机（登录）自启动任务。
+  作用：用户登录 Windows 后自动启动整套 bot 运行栈。
+#>
+
 param(
     [string]$TaskName = "CloudyLesbianBot_Autostart"
 )
@@ -32,3 +37,4 @@ Register-ScheduledTask `
 
 Write-Output "Scheduled task installed: $TaskName"
 Write-Output "Run now: Start-ScheduledTask -TaskName $TaskName"
+

@@ -1,3 +1,8 @@
+<#
+  功能：防休眠保活循环。
+  作用：持续调用系统 API 防止系统休眠导致 bot 中断。
+#>
+
 $ErrorActionPreference = "Stop"
 
 Add-Type -TypeDefinition @"
@@ -23,3 +28,4 @@ try {
 } finally {
     [PowerKeepAwake]::SetThreadExecutionState($ES_CONTINUOUS) | Out-Null
 }
+

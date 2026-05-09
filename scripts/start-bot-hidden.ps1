@@ -1,3 +1,8 @@
+<#
+  功能：后台启动机器人主程序。
+  作用：加载 .env、检查代理端点、必要时构建并隐藏启动，写入日志与 PID。
+#>
+
 $ErrorActionPreference = "Stop"
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
@@ -32,7 +37,7 @@ if (Test-Path $envPath) {
 
 function Wait-TcpEndpoint {
     param(
-        [string]$Host,
+        [string]$HostName,
         [int]$Port,
         [int]$TimeoutSeconds = 20
     )
@@ -41,7 +46,7 @@ function Wait-TcpEndpoint {
     while ((Get-Date) -lt $deadline) {
         $client = New-Object System.Net.Sockets.TcpClient
         try {
-            $task = $client.ConnectAsync($Host, $Port)
+            $task = $client.ConnectAsync($HostName, $Port)
             if ($task.Wait(1000) -and $client.Connected) {
                 return $true
             }
@@ -57,22 +62,43 @@ function Wait-TcpEndpoint {
 
 $proxyRaw = [Environment]::GetEnvironmentVariable("TELOXIDE_PROXY", "Process")
 if (-not [string]::IsNullOrWhiteSpace($proxyRaw)) {
+    $proxyUri = $null
     try {
         $proxyUri = [System.Uri]$proxyRaw
-        if ($proxyUri.Host -and $proxyUri.Port -gt 0) {
-            Write-Output "Waiting for proxy endpoint $($proxyUri.Host):$($proxyUri.Port) ..."
-            if (-not (Wait-TcpEndpoint -Host $proxyUri.Host -Port $proxyUri.Port -TimeoutSeconds 25)) {
-                Write-Output "Warning: proxy endpoint not reachable yet, bot may retry network calls."
-            }
-        }
     } catch {
         Write-Output "Warning: TELOXIDE_PROXY is not a valid URI: $proxyRaw"
+    }
+
+    if ($proxyUri -and $proxyUri.Host -and $proxyUri.Port -gt 0) {
+        Write-Output "Waiting for proxy endpoint $($proxyUri.Host):$($proxyUri.Port) ..."
+        if (-not (Wait-TcpEndpoint -HostName $proxyUri.Host -Port $proxyUri.Port -TimeoutSeconds 25)) {
+            Write-Output "Warning: proxy endpoint not reachable yet, bot may retry network calls."
+        }
     }
 }
 
 $exePath = Join-Path $projectRoot "target\\debug\\cloudy_lesbian_bot.exe"
-if (-not (Test-Path $exePath)) {
-    Write-Output "Bot executable not found, building..."
+$manifestPath = Join-Path $projectRoot "Cargo.toml"
+$sourcePaths = @(
+    (Join-Path $projectRoot "src\\main.rs"),
+    $manifestPath
+)
+
+$needsBuild = (-not (Test-Path $exePath))
+if (-not $needsBuild) {
+    $exeTime = (Get-Item $exePath).LastWriteTimeUtc
+    foreach ($src in $sourcePaths) {
+        if (Test-Path $src) {
+            if ((Get-Item $src).LastWriteTimeUtc -gt $exeTime) {
+                $needsBuild = $true
+                break
+            }
+        }
+    }
+}
+
+if ($needsBuild) {
+    Write-Output "Bot executable missing/outdated, building..."
     cargo build | Out-Null
 }
 
@@ -96,3 +122,4 @@ Set-Content -Path $pidPath -Value $process.Id -Encoding ASCII
 Write-Output "Bot started. PID=$($process.Id)"
 Write-Output "STDOUT log: $stdoutLog"
 Write-Output "STDERR log: $stderrLog"
+

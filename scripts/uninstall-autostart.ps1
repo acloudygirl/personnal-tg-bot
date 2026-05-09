@@ -1,3 +1,8 @@
+<#
+  功能：卸载开机（登录）自启动任务。
+  作用：删除已注册的计划任务，取消自动拉起。
+#>
+
 param(
     [string]$TaskName = "CloudyLesbianBot_Autostart"
 )
@@ -12,3 +17,4 @@ if (-not $task) {
 
 Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
 Write-Output "Scheduled task removed: $TaskName"
+

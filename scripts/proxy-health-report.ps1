@@ -1,3 +1,8 @@
+<#
+  功能：代理健康报告。
+  作用：读取 mihomo 控制面数据并输出节点可用率、延迟与切换统计。
+#>
+
 param(
     [int]$Hours = 1,
     [int]$Top = 8
@@ -147,3 +152,4 @@ if ($topRows.Count -gt 0) {
     Write-Output ""
     Write-Output "No healthy node delay data yet."
 }
+

@@ -1,3 +1,8 @@
+<#
+  功能：代理守护循环。
+  作用：确保 rule 模式、自动挑选健康节点，并修正 GLOBAL 指向。
+#>
+
 param(
     [int]$IntervalSeconds = 90
 )
@@ -31,13 +36,41 @@ if ([string]::IsNullOrWhiteSpace($secret)) {
 
 $headers = @{ Authorization = "Bearer $secret" }
 
+function Invoke-ControllerApi {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Method,
+        [Parameter(Mandatory = $true)]
+        [string]$Uri,
+        [string]$ContentType,
+        [object]$Body
+    )
+
+    $baseParams = @{
+        Method = $Method
+        Uri = $Uri
+    }
+    if ($ContentType) { $baseParams.ContentType = $ContentType }
+    if ($null -ne $Body) { $baseParams.Body = $Body }
+
+    try {
+        return Invoke-RestMethod @baseParams -Headers $headers
+    } catch {
+        $msg = $_.Exception.Message
+        if ($msg -match "\b(400|401|403)\b") {
+            return Invoke-RestMethod @baseParams
+        }
+        throw
+    }
+}
+
 function Encode-Segment {
     param([string]$Value)
     return [Uri]::EscapeDataString($Value)
 }
 
 function Get-ProxyMap {
-    $resp = Invoke-RestMethod -Method Get -Uri "$controller/proxies" -Headers $headers
+    $resp = Invoke-ControllerApi -Method Get -Uri "$controller/proxies"
     return $resp.proxies
 }
 
@@ -56,10 +89,9 @@ function Set-SelectorChoice {
     )
     $encoded = Encode-Segment $SelectorName
     $body = @{ name = $ChoiceName } | ConvertTo-Json -Compress
-    Invoke-RestMethod `
+    Invoke-ControllerApi `
         -Method Put `
         -Uri "$controller/proxies/$encoded" `
-        -Headers $headers `
         -ContentType "application/json; charset=utf-8" `
         -Body $body | Out-Null
 }
@@ -71,7 +103,7 @@ function Trigger-DelayTest {
     $encoded = Encode-Segment $GroupName
     $url = "$controller/group/$encoded/delay?url=https%3A%2F%2Fapi.telegram.org&timeout=8000"
     try {
-        Invoke-RestMethod -Method Get -Uri $url -Headers $headers | Out-Null
+        Invoke-ControllerApi -Method Get -Uri $url | Out-Null
     } catch {
         # Keep loop resilient if one test call fails.
     }
@@ -79,13 +111,12 @@ function Trigger-DelayTest {
 
 function Ensure-RuleMode {
     try {
-        $cfg = Invoke-RestMethod -Method Get -Uri "$controller/configs" -Headers $headers
+        $cfg = Invoke-ControllerApi -Method Get -Uri "$controller/configs"
         if ($cfg.mode -ne "rule") {
             $body = @{ mode = "rule" } | ConvertTo-Json -Compress
-            Invoke-RestMethod `
+            Invoke-ControllerApi `
                 -Method Patch `
                 -Uri "$controller/configs" `
-                -Headers $headers `
                 -ContentType "application/json; charset=utf-8" `
                 -Body $body | Out-Null
             Write-Output "$(Get-Date -Format s) switch mode -> rule"
@@ -189,3 +220,4 @@ while ($true) {
 
     Start-Sleep -Seconds $IntervalSeconds
 }
+

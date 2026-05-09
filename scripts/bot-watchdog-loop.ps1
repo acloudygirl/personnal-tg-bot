@@ -1,7 +1,12 @@
+<#
+  功能：机器人健康守护循环。
+  作用：定时检测 Telegram 连通性；连续失败达到阈值后自动重启 bot。
+#>
+
 param(
     [int]$IntervalSeconds = 45,
-    [int]$FailureThreshold = 3,
-    [int]$RestartCooldownSeconds = 120
+    [int]$FailureThreshold = 8,
+    [int]$RestartCooldownSeconds = 600
 )
 
 $ErrorActionPreference = "Stop"
@@ -104,12 +109,16 @@ while ($true) {
         if ($failCount -ge $FailureThreshold) {
             $elapsed = ((Get-Date) - $lastRestartAt).TotalSeconds
             if ($elapsed -ge $RestartCooldownSeconds) {
-                if (Test-Path $stopBotScript) { & $stopBotScript | Out-Null }
-                Start-Sleep -Seconds 2
-                if (Test-Path $startBotScript) { & $startBotScript | Out-Null }
-                $lastRestartAt = Get-Date
-                $failCount = 0
-                Write-Output "$(Get-Date -Format s) bot restarted by watchdog"
+                $botCheck = Get-Process -Name "cloudy_lesbian_bot" -ErrorAction SilentlyContinue | Select-Object -First 1
+                if (-not $botCheck) {
+                    if (Test-Path $startBotScript) { & $startBotScript | Out-Null }
+                    $lastRestartAt = Get-Date
+                    $failCount = 0
+                    Write-Output "$(Get-Date -Format s) bot was missing and started by watchdog"
+                } else {
+                    # 网络波动时不强制重启，避免触发 TerminatedByOtherGetUpdates。
+                    $failCount = [Math]::Min($FailureThreshold - 1, $failCount)
+                }
             }
         }
     } catch {
@@ -118,3 +127,4 @@ while ($true) {
 
     Start-Sleep -Seconds $IntervalSeconds
 }
+
